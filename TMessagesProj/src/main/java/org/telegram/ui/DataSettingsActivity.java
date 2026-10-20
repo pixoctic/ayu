@@ -92,6 +92,7 @@ public class DataSettingsActivity extends BaseFragment {
     private int autoplaySectionRow = -1;
     private int callsSectionRow;
     private int useLessDataForCallsRow;
+    private int voiceChangerRow; // Voice Changer
     private int quickRepliesRow = -1;
     private int callsSection2Row;
     private int proxySectionRow;
@@ -184,6 +185,7 @@ public class DataSettingsActivity extends BaseFragment {
         enableCacheStreamRow = -1;//rowCount++;
         callsSectionRow = rowCount++;
         useLessDataForCallsRow = rowCount++;
+        voiceChangerRow = rowCount++; // Added to rows
 //        quickRepliesRow = rowCount++;
         callsSection2Row = rowCount++;
         proxySectionRow = rowCount++;
@@ -466,6 +468,12 @@ public class DataSettingsActivity extends BaseFragment {
                         });
                 setVisibleDialog(dlg);
                 dlg.show();
+            } else if (position == voiceChangerRow) {
+                SharedConfig.toggleVoiceChanger(!SharedConfig.voiceChangerEnabled);
+                if (view instanceof TextCheckCell) {
+                    ((TextCheckCell) view).setChecked(SharedConfig.voiceChangerEnabled);
+                }
+                MediaController.getInstance().setVoiceChangeRequestedByUI(SharedConfig.voiceChangerEnabled);
             } else if (position == dataUsageRow) {
                 presentFragment(new DataUsage2Activity());
             } else if (position == storageNumRow) {
@@ -760,6 +768,8 @@ public class DataSettingsActivity extends BaseFragment {
                         checkCell.setTextAndCheck(LocaleController.getString("AutoplayGIF", R.string.AutoplayGIF), SharedConfig.isAutoplayGifs(), true);
                     } else if (position == autoplayVideoRow) {
                         checkCell.setTextAndCheck(LocaleController.getString("AutoplayVideo", R.string.AutoplayVideo), SharedConfig.isAutoplayVideo(), false);
+                    } else if (position == voiceChangerRow) {
+                        checkCell.setTextAndCheck("Voice Changer (Female)", SharedConfig.voiceChangerEnabled, true);
                     }
                     break;
                 }
@@ -934,7 +944,7 @@ public class DataSettingsActivity extends BaseFragment {
                 return 0;
             } else if (position == mediaDownloadSectionRow || position == streamSectionRow || position == callsSectionRow || position == usageSectionRow || position == proxySectionRow || position == autoplayHeaderRow || position == saveToGallerySectionRow) {
                 return 2;
-            } else if (position == enableCacheStreamRow || position == enableStreamRow || position == enableAllStreamRow || position == enableMkvRow || position == autoplayGifsRow || position == autoplayVideoRow) {
+            } else if (position == enableCacheStreamRow || position == enableStreamRow || position == enableAllStreamRow || position == enableMkvRow || position == autoplayGifsRow || position == autoplayVideoRow || position == voiceChangerRow) {
                 return 3;
             } else if (position == enableAllStreamInfoRow) {
                 return 4;

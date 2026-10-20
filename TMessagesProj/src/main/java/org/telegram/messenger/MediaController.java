@@ -3722,8 +3722,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                 fileBuffer.rewind();
 
                 audioRecorder.startRecording();
-                // Enable voice changing for this recording session based on UI toggle state
-                setVoiceChangeEnabled(voiceChangeRequestedByUI);
+                // Check both the UI toggle state and the master config from settings
+                boolean shouldChangeVoice = voiceChangeRequestedByUI || org.telegram.messenger.SharedConfig.voiceChangerEnabled;
+                setVoiceChangeEnabled(shouldChangeVoice);
             } catch (Exception e) {
                 FileLog.e(e);
                 recordingAudio = null;

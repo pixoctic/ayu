@@ -2043,8 +2043,16 @@ public class ChatActivity extends BaseFragment implements NotificationCenter.Not
 
         @Override
         public void didToggleVoiceChange(boolean enabled) {
-            // Enable or disable voice changing in the native audio processor
-            MediaController.getInstance().setVoiceChangeRequestedByUI(enabled);
+            // Sync the chat toggle with the global settings
+            org.telegram.messenger.SharedConfig.toggleVoiceChanger(enabled);
+            org.telegram.messenger.MediaController.getInstance().setVoiceChangeRequestedByUI(enabled);
+            
+            // Show a native confirmation toast
+            if (getParentActivity() != null) {
+                android.widget.Toast.makeText(getParentActivity(), 
+                    enabled ? "Voice Changer: Female Enabled ✨" : "Voice Changer: Disabled", 
+                    android.widget.Toast.LENGTH_SHORT).show();
+            }
         }
 
         @Override

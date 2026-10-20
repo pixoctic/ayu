@@ -151,6 +151,7 @@ public class SharedConfig {
     public static boolean stickersReorderingHintUsed;
     public static int dayNightWallpaperSwitchHint;
     public static boolean disableVoiceAudioEffects;
+    public static boolean voiceChangerEnabled; // Voice Changer Configuration
     public static boolean forceDisableTabletMode;
     public static boolean updateStickersOrderOnSend = true;
     public static boolean bigCameraForRound;
@@ -365,6 +366,7 @@ public class SharedConfig {
                 editor.putBoolean("hasEmailLogin", hasEmailLogin);
                 editor.putBoolean("floatingDebugActive", isFloatingDebugActive);
                 editor.putBoolean("record_via_sco", recordViaSco);
+                editor.putBoolean("voiceChangerEnabled", voiceChangerEnabled);
                 editor.apply();
             } catch (Exception e) {
                 FileLog.e(e);
@@ -523,6 +525,7 @@ public class SharedConfig {
             forwardingOptionsHintShown = preferences.getBoolean("forwardingOptionsHintShown", false);
             lockRecordAudioVideoHint = preferences.getInt("lockRecordAudioVideoHint", 0);
             disableVoiceAudioEffects = preferences.getBoolean("disableVoiceAudioEffects", false);
+            voiceChangerEnabled = preferences.getBoolean("voiceChangerEnabled", false);
             noiseSupression = preferences.getBoolean("noiseSupression", false);
             chatSwipeAction = preferences.getInt("ChatSwipeAction", -1);
             messageSeenHintCount = preferences.getInt("messageSeenCount", 3);
@@ -861,6 +864,14 @@ public class SharedConfig {
         SharedPreferences preferences = MessagesController.getGlobalMainSettings();
         SharedPreferences.Editor editor = preferences.edit();
         editor.putBoolean("disableVoiceAudioEffects", disableVoiceAudioEffects);
+        editor.apply();
+    }
+
+    public static void toggleVoiceChanger(boolean enabled) {
+        voiceChangerEnabled = enabled;
+        SharedPreferences preferences = MessagesController.getGlobalMainSettings();
+        SharedPreferences.Editor editor = preferences.edit();
+        editor.putBoolean("voiceChangerEnabled", voiceChangerEnabled);
         editor.apply();
     }
 
