@@ -26,8 +26,20 @@ jobs:
       - name: Grant Gradle Permissions
         run: chmod +x gradlew
 
+      - name: Ensure API_KEYS File Exists
+        run: |
+          cat << 'EOF' > API_KEYS
+          APP_ID=6
+          APP_HASH="eb06d4abfb49dc3eeb1aeb98ae0f581e"
+          MAPS_V2_API="abcdef12345678"
+          SIGNING_KEY_PASSWORD=password
+          SIGNING_KEY_ALIAS=alias
+          SIGNING_KEY_STORE_PASSWORD=password
+          EOF
+
       - name: Generate Dummy Keystore
         run: |
+          rm -f dummy.keystore
           keytool -genkey -v -keystore dummy.keystore -alias dummy -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Kalidas, OU=Dev, O=AyuGram, L=Kochi, S=Kerala, C=IN"
 
       - name: Build Release APK
