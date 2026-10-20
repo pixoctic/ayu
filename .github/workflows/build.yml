@@ -10,6 +10,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Maximize Runner Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/share/swift
+          sudo docker system prune -af --volumes
+          df -h
+
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -33,7 +42,7 @@ jobs:
           APP_HASH="eb06d4abfb49dc3eeb1aeb98ae0f581e"
           MAPS_V2_API="abcdef12345678"
           SIGNING_KEY_PASSWORD=password
-          SIGNING_KEY_ALIAS=alias
+          SIGNING_KEY_ALIAS=dummy
           SIGNING_KEY_STORE_PASSWORD=password
           EOF
 
@@ -42,9 +51,10 @@ jobs:
           rm -f dummy.keystore
           keytool -genkey -v -keystore dummy.keystore -alias dummy -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Kalidas, OU=Dev, O=AyuGram, L=Kochi, S=Kerala, C=IN"
 
-      - name: Build Release APK
+      - name: Build Release APK (arm64-v8a Only)
         run: |
           ./gradlew assembleAfatRelease \
+            -Pandroid.injected.build.abi.arm64-v8a=true \
             -Pandroid.injected.signing.store.file="${{ github.workspace }}/dummy.keystore" \
             -Pandroid.injected.signing.store.password="password" \
             -Pandroid.injected.signing.key.alias="dummy" \
