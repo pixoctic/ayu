@@ -261,6 +261,8 @@ public class ChatActivityEnterView extends BlurredFrameLayout implements Notific
             return false;
         }
 
+        default void didToggleVoiceChange(boolean enabled) {};
+
         /**
          * @return Height of the content view
          */
@@ -483,6 +485,7 @@ public class ChatActivityEnterView extends BlurredFrameLayout implements Notific
     private AnimatorSet scheduledButtonAnimation;
     @Nullable
     private RecordCircle recordCircle;
+    private boolean voiceChangeEnabled = false;
     private CloseProgressDrawable2 progressDrawable;
     private Paint dotPaint;
     private MediaActionDrawable playPauseDrawable;
@@ -2120,6 +2123,7 @@ public class ChatActivityEnterView extends BlurredFrameLayout implements Notific
                                 delegate.needStartRecordVideo(2, true, 0);
                             } else {
                                 delegate.needStartRecordAudio(0);
+                                MediaController.getInstance().setVoiceChangeRequestedByUI(false);
                                 MediaController.getInstance().stopRecording(0, false, 0);
                             }
                             recordingAudioVideo = false;
@@ -2146,6 +2150,7 @@ public class ChatActivityEnterView extends BlurredFrameLayout implements Notific
                             delegate.needStartRecordVideo(2, true, 0);
                         } else {
                             delegate.needStartRecordAudio(0);
+                            MediaController.getInstance().setVoiceChangeRequestedByUI(false);
                             MediaController.getInstance().stopRecording(0, false, 0);
                         }
                         recordingAudioVideo = false;
@@ -2173,6 +2178,7 @@ public class ChatActivityEnterView extends BlurredFrameLayout implements Notific
                                     AlertsCreator.createScheduleDatePickerDialog(parentActivity, parentFragment.getDialogId(), (notify, scheduleDate) -> MediaController.getInstance().stopRecording(1, notify, scheduleDate), () -> MediaController.getInstance().stopRecording(0, false, 0), resourcesProvider);
                                 }
                                 delegate.needStartRecordAudio(0);
+                                MediaController.getInstance().setVoiceChangeRequestedByUI(false);
                                 MediaController.getInstance().stopRecording(isInScheduleMode() ? 3 : 1, true, 0);
                             }
                             recordingAudioVideo = false;
@@ -2228,6 +2234,7 @@ public class ChatActivityEnterView extends BlurredFrameLayout implements Notific
                             delegate.needStartRecordVideo(2, true, 0);
                         } else {
                             delegate.needStartRecordAudio(0);
+                            MediaController.getInstance().setVoiceChangeRequestedByUI(false);
                             MediaController.getInstance().stopRecording(0, false, 0);
                         }
                         recordingAudioVideo = false;
@@ -7178,6 +7185,24 @@ public class ChatActivityEnterView extends BlurredFrameLayout implements Notific
         messageEditTextContainer.addView(recordPanel, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 48));
         recordPanel.setOnTouchListener((v, event) -> true);
         recordPanel.addView(slideText = new SlideTextView(getContext()), LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.NO_GRAVITY, 45, 0, 0, 0));
+
+        // Voice change toggle button
+        ImageView voiceChangeToggle = new ImageView(getContext());
+        voiceChangeToggle.setScaleType(ImageView.ScaleType.CENTER);
+        voiceChangeToggle.setImageResource(R.drawable.ic_voice_change); // We'll need to create this icon
+        voiceChangeToggle.setPadding(AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4));
+        voiceChangeToggle.setSelected(voiceChangeEnabled);
+        voiceChangeToggle.setOnClickListener(v -> {
+            // Toggle voice changing state
+            voiceChangeEnabled = !voiceChangeEnabled;
+            voiceChangeToggle.setSelected(voiceChangeEnabled);
+            // Notify MediaController to enable/disable voice changing
+            // We'll use the delegate to communicate with the parent activity
+            if (delegate != null) {
+                delegate.didToggleVoiceChange(voiceChangeEnabled);
+            }
+        });
+        recordPanel.addView(voiceChangeToggle, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL | Gravity.RIGHT, 0, 0, 0, 0));
 
         LinearLayout recordTimeContainer = new LinearLayout(getContext());
         recordTimeContainer.setOrientation(LinearLayout.HORIZONTAL);

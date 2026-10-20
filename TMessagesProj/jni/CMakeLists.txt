@@ -332,7 +332,9 @@ add_library(${NATIVE_LIB} SHARED
         exoplayer/ffmpeg_jni.cc
         fast-edge.cpp
         genann.c
-        secureid_ocr.cpp)
+        secureid_ocr.cpp
+        third_party/pffft/src/pffft.c
+        third_party/pffft/src/fftpack.c)
 
 target_compile_options(${NATIVE_LIB} PUBLIC
         -ffast-math -Os -funroll-loops -ffast-math -fno-strict-aliasing -fno-math-errno)
@@ -342,15 +344,19 @@ target_compile_definitions(${NATIVE_LIB} PUBLIC
 
 if (${ANDROID_ABI} STREQUAL "armeabi-v7a")
     set_target_properties(${NATIVE_LIB} PROPERTIES
-            ANDROID_ARM_NEON FALSE
+            ANDROID_ARM_NEON TRUE
             ANDROID_ARM_MODE arm)
     target_compile_definitions(${NATIVE_LIB} PUBLIC
-            ANDROID_ARM_NEON=false)
+            ANDROID_ARM_NEON=true)
     target_sources(${NATIVE_LIB} PRIVATE
         third_party/libyuv/source/compare_neon.cc
         third_party/libyuv/source/rotate_neon.cc
         third_party/libyuv/source/row_neon.cc
         third_party/libyuv/source/scale_neon.cc)
+elseif(${ANDROID_ABI} STREQUAL "arm64-v8a")
+    set_target_properties(${NATIVE_LIB} PROPERTIES
+            ANDROID_ARM_NEON TRUE
+            ANDROID_ARM_MODE arm)
 else()
     set_target_properties(${NATIVE_LIB} PROPERTIES
             ANDROID_ARM_NEON FALSE
@@ -359,7 +365,7 @@ endif()
 
 if (${ANDROID_ABI} STREQUAL "armeabi-v7a" OR ${ANDROID_ABI} STREQUAL "arm64-v8a")
     target_compile_definitions(${NATIVE_LIB} PUBLIC
-            LIBYUV_NEON OPUS_HAVE_RTCD OPUS_ARM_ASM)
+            LIBYUV_NEON OPUS_HAVE_RTCD OPUS_ARM_ASM ANDROID_ARM_NEON)
 
     target_sources(${NATIVE_LIB} PRIVATE
             opus/celt/arm/celt_neon_intr.c
@@ -574,6 +580,7 @@ target_include_directories(${NATIVE_LIB} PUBLIC
         opus/
         opus/opusfile
         third_party/libyuv/include
+        third_party/pffft/src
         boringssl/include
         ffmpeg/include
         emoji
@@ -608,6 +615,7 @@ target_link_libraries(${NATIVE_LIB}
         jnigraphics
         log
         z
+        m
         GLESv2
         EGL
         android

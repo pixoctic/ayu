@@ -1,0 +1,46 @@
+name: Build Custom AyuGram
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Remove local.properties
+        run: rm -f local.properties
+
+      - name: Grant Gradle Permissions
+        run: chmod +x gradlew
+
+      - name: Generate Dummy Keystore
+        run: |
+          keytool -genkey -v -keystore dummy.keystore -alias dummy -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Kalidas, OU=Dev, O=AyuGram, L=Kochi, S=Kerala, C=IN"
+
+      - name: Build Release APK
+        run: |
+          ./gradlew assembleAfatRelease \
+            -Pandroid.injected.signing.store.file="${{ github.workspace }}/dummy.keystore" \
+            -Pandroid.injected.signing.store.password="password" \
+            -Pandroid.injected.signing.key.alias="dummy" \
+            -Pandroid.injected.signing.key.password="password" \
+            -Dorg.gradle.jvmargs="-Xmx5g -Xss8m -XX:MaxMetaspaceSize=1g"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AyuGram-VoiceChanger-APK
+          path: TMessagesProj/build/outputs/apk/afat/release/*.apk

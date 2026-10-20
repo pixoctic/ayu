@@ -2042,6 +2042,12 @@ public class ChatActivity extends BaseFragment implements NotificationCenter.Not
         }
 
         @Override
+        public void didToggleVoiceChange(boolean enabled) {
+            // Enable or disable voice changing in the native audio processor
+            MediaController.getInstance().setVoiceChangeRequestedByUI(enabled);
+        }
+
+        @Override
         public void needShowMediaBanHint() {
             showMediaBannedHint();
         }

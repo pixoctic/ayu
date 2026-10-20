@@ -7,6 +7,7 @@
 #include <opusfile.h>
 #include <math.h>
 #include "c_utils.h"
+#include "../third_party/pffft/src/pffft.h"
 
 typedef struct {
     int version;
@@ -50,6 +51,7 @@ typedef struct {
     int comments_length;
     int copy_comments;
 } oe_enc_opt;
+void cleanupVoiceChanging(void);
 
 static int write_uint32(Packet *p, ogg_uint32_t val) {
     if (p->pos > p->maxlen - 4) {
@@ -220,7 +222,7 @@ static int writeOggPage(ogg_page *page, FILE *os) {
 }
 
 const opus_int32 bitrate = OPUS_BITRATE_MAX;
-const opus_int32 frame_size = 960;
+int frame_size = 960;
 const int with_cvbr = 1;
 const int max_ogg_delay = 0;
 const int comment_padding = 512;
@@ -246,6 +248,30 @@ ogg_int64_t enc_granulepos;
 ogg_int64_t last_granulepos;
 int size_segments;
 int last_segments;
+
+// Voice changing state
+int voiceChangeEnabled = 0;
+float pitchShiftSemitones = 4.0f; // +4.0 semitones
+float formantScale = 1.20f; // 1.20 formant scaling
+int sampleRate = 48000; // Assuming 48kHz sample rate
+PFFFT_Setup *pffftSetup = NULL;
+float *fftWorkBuffer = NULL;
+float *inputBuffer = NULL;
+float *outputBuffer = NULL;
+float *magnitudeBuffer = NULL;
+float *phaseBuffer = NULL;
+uint8_t *pcm_padded_buffer = NULL; // Pre-allocated buffer for PCM frame padding
+uint8_t *paddedFrameBuffer = NULL;
+
+// Filter coefficients for high-pass filter (110 Hz cutoff)
+float hp_a0, hp_a1, hp_a2, hp_b1, hp_b2;
+float hp_x1 = 0.0f, hp_x2 = 0.0f;
+float hp_y1 = 0.0f, hp_y2 = 0.0f;
+
+// Filter coefficients for presence boost (peak EQ at 3.2 kHz, +2dB)
+float pb_a0, pb_a1, pb_a2, pb_b1, pb_b2;
+float pb_x1 = 0.0f, pb_x2 = 0.0f;
+float pb_y1 = 0.0f, pb_y2 = 0.0f;
 
 void cleanupRecorder() {
     
@@ -281,6 +307,145 @@ void cleanupRecorder() {
     memset(&header, 0, sizeof(OpusHeader));
     memset(&op, 0, sizeof(ogg_packet));
     memset(&og, 0, sizeof(ogg_page));
+
+    // Cleanup voice changing components
+    cleanupVoiceChanging();
+}
+
+// Filter coefficient calculation functions
+void updateHPCoefficients(float cutoffFreq, float sampleRate) {
+    // Safety check for sample rate
+    if (sampleRate <= 0.0f) {
+        sampleRate = 48000.0f; // Default to 48kHz if invalid
+    }
+
+    float w0 = 2.0f * M_PI * cutoffFreq / sampleRate;
+    float cosW0 = cosf(w0);
+    float sinW0 = sinf(w0);
+    float alpha = sinW0 / 2.0f; // Q = sqrt(2)/2 for Butterworth
+
+    hp_a0 = 1.0f + alpha;
+    hp_a1 = -2.0f * cosW0;
+    hp_a2 = 1.0f - alpha;
+    hp_b1 = -2.0f * cosW0;
+    hp_b2 = 1.0f - alpha;
+
+    // Normalize
+    hp_a0 = 1.0f / hp_a0;
+    hp_a1 *= hp_a0;
+    hp_a2 *= hp_a0;
+    hp_b1 *= hp_a0;
+    hp_b2 *= hp_a0;
+}
+
+void updatePBNormalCoefficients(float centerFreq, float gainDB, float sampleRate) {
+    // Safety check for sample rate
+    if (sampleRate <= 0.0f) {
+        sampleRate = 48000.0f; // Default to 48kHz if invalid
+    }
+
+    float w0 = 2.0f * M_PI * centerFreq / sampleRate;
+    float cosW0 = cosf(w0);
+    float sinW0 = sinf(w0);
+    float A = powf(10.0f, gainDB / 4.0f);
+    float alpha = sinW0 / 2.0f * sqrtf((A + 1.0f/A) * (1.0f/0.707f - 1.0f) + 2.0f); // Q = 0.707
+
+    pb_a0 = 1.0f + alpha * A;
+    pb_a1 = -2.0f * cosW0;
+    pb_a2 = 1.0f - alpha * A;
+    pb_b1 = -2.0f * cosW0;
+    pb_b2 = 1.0f - alpha / A;
+
+    // Normalize
+    float norm = 1.0f / (1.0f + alpha/A);
+    pb_a0 *= norm;
+    pb_a1 *= norm;
+    pb_a2 *= norm;
+    pb_b1 *= norm;
+    pb_b2 *= norm;
+}
+
+// Voice changing initialization and cleanup
+void initializeVoiceChanging(int sample_rate) {
+    // Store sample rate
+    voiceChangeEnabled = 0; // Start disabled by default
+    sampleRate = sample_rate;
+
+    // Calculate frame size (20ms frames)
+    frame_size = (sampleRate * 20) / 1000;
+    if (frame_size < 64) frame_size = 64; // Minimum reasonable size
+    if (frame_size > 1024) frame_size = 1024; // Maximum reasonable size
+
+    // Allocate PCM padded buffer (max size for safety)
+    if (pcm_padded_buffer) {
+        free(pcm_padded_buffer);
+    }
+    pcm_padded_buffer = (uint8_t*)malloc(frame_size * 2); // 16-bit PCM = 2 bytes per sample
+
+    // Initialize PFFFT for pitch shifting
+    pffftSetup = pffft_new_setup(frame_size, PFFFT_REAL);
+    if (pffftSetup) {
+        fftWorkBuffer = (float*)pffft_aligned_malloc(frame_size * sizeof(float));
+        inputBuffer = (float*)pffft_aligned_malloc(frame_size * sizeof(float));
+        outputBuffer = (float*)pffft_aligned_malloc(frame_size * sizeof(float));
+        magnitudeBuffer = (float*)pffft_aligned_malloc((frame_size/2 + 1) * sizeof(float));
+        phaseBuffer = (float*)pffft_aligned_malloc((frame_size/2 + 1) * sizeof(float));
+    }
+
+    // Initialize filter coefficients
+    updateHPCoefficients(110.0f, sampleRate); // 110 Hz high-pass
+    updatePBNormalCoefficients(3200.0f, 2.0f, sampleRate); // 3.2 kHz peak, +2dB
+}
+
+void cleanupVoiceChanging() {
+    voiceChangeEnabled = 0;
+
+    if (pffftSetup) {
+        pffft_destroy_setup(pffftSetup);
+        pffftSetup = NULL;
+    }
+
+    if (fftWorkBuffer) {
+        pffft_aligned_free(fftWorkBuffer);
+        fftWorkBuffer = NULL;
+    }
+
+    if (inputBuffer) {
+        pffft_aligned_free(inputBuffer);
+        inputBuffer = NULL;
+    }
+
+    if (outputBuffer) {
+        pffft_aligned_free(outputBuffer);
+        outputBuffer = NULL;
+    }
+
+    if (magnitudeBuffer) {
+        pffft_aligned_free(magnitudeBuffer);
+        magnitudeBuffer = NULL;
+    }
+
+    if (phaseBuffer) {
+        pffft_aligned_free(phaseBuffer);
+        phaseBuffer = NULL;
+    }
+
+    if (paddedFrameBuffer) {
+        free(paddedFrameBuffer);
+        paddedFrameBuffer = NULL;
+    }
+}
+
+// JNI method to enable/disable voice changing
+JNIEXPORT void Java_org_telegram_messenger_MediaController_setVoiceChangeEnabled(JNIEnv *env, jclass class, jboolean enabled) {
+    voiceChangeEnabled = enabled ? 1 : 0;
+
+    // Log the change for debugging
+    if (voiceChangeEnabled) {
+        LOGI("Voice changing enabled");
+    } else {
+        LOGI("Voice changing disabled");
+    }
 }
 
 int initRecorder(const char *path, opus_int32 sampleRate) {
@@ -412,7 +577,10 @@ int initRecorder(const char *path, opus_int32 sampleRate) {
     }
     
     free(inopt.comments);
-    
+
+    // Initialize voice changing components
+    initializeVoiceChanging(sampleRate);
+
     return 1;
 }
 int writeFrame(uint8_t *framePcmBytes, uint32_t frameByteCount) {
@@ -421,6 +589,111 @@ int writeFrame(uint8_t *framePcmBytes, uint32_t frameByteCount) {
     
     opus_int32 nb_samples = frameByteCount / 2;
     total_samples += nb_samples;
+
+    // Process audio for voice changing if enabled
+    if (voiceChangeEnabled && nb_samples > 0 && pffftSetup != NULL) {
+        // Convert PCM to float array
+        for (int i = 0; i < nb_samples; i++) {
+            int16_t sample = ((int16_t*)framePcmBytes)[i];
+            inputBuffer[i] = (float)sample / 32768.0f; // Normalize to [-1.0, 1.0]
+        }
+
+        // Apply high-pass filter
+        for (int i = 0; i < nb_samples; i++) {
+            float sample = inputBuffer[i];
+            float out = hp_a0 * sample + hp_a1 * hp_x1 + hp_a2 * hp_x2 - hp_b1 * hp_y1 - hp_b2 * hp_y2;
+            hp_x2 = hp_x1;
+            hp_x1 = sample;
+            hp_y2 = hp_y1;
+            hp_y1 = out;
+            inputBuffer[i] = out;
+        }
+
+        // Apply presence boost (peak EQ)
+        for (int i = 0; i < nb_samples; i++) {
+            float sample = inputBuffer[i];
+            float out = pb_a0 * sample + pb_a1 * pb_x1 + pb_a2 * pb_x2 - pb_b1 * pb_y1 - pb_b2 * pb_y2;
+            pb_x2 = pb_x1;
+            pb_x1 = sample;
+            pb_y2 = pb_y1;
+            pb_y1 = out;
+            inputBuffer[i] = out;
+        }
+
+        // Pitch shifting using FFT-based approach
+        // Zero-pad input to frame_size if needed
+        for (int i = 0; i < frame_size; i++) {
+            if (i < nb_samples) {
+                // Already normalized above
+            } else {
+                inputBuffer[i] = 0.0f;
+            }
+        }
+
+        // Forward FFT
+        pffft_transform(pffftSetup, inputBuffer, outputBuffer, fftWorkBuffer, PFFFT_FORWARD);
+
+        // Convert to magnitude/phase
+        for (int i = 0; i <= frame_size/2; i++) {
+            float re = outputBuffer[i*2];
+            float im = outputBuffer[i*2+1];
+            magnitudeBuffer[i] = sqrtf(re*re + im*im);
+            phaseBuffer[i] = atan2f(im, re);
+        }
+
+        // Apply pitch shifting: shift frequency components up by 4 semitones
+        // 4 semitones = 2^(4/12) = 2^(1/3) ≈ 1.2599 frequency multiplier
+        float pitchFactor = powf(2.0f, 4.0f/12.0f); // 2^(4/12)
+
+        // Shift magnitudes (formant preservation would be more complex)
+        // For simplicity, we're shifting both pitch and formants
+        // A more advanced implementation would separate them
+        memset(outputBuffer, 0, frame_size * 2 * sizeof(float)); // Clear output
+
+        for (int i = 0; i <= frame_size/2; i++) {
+            int newIdx = (int)(i * pitchFactor);
+            if (newIdx <= frame_size/2) {
+                float re = magnitudeBuffer[i] * cosf(phaseBuffer[i]);
+                float im = magnitudeBuffer[i] * sinf(phaseBuffer[i]);
+                outputBuffer[newIdx*2] = re;
+                outputBuffer[newIdx*2+1] = im;
+            }
+        }
+
+        // Inverse FFT
+        pffft_transform(pffftSetup, outputBuffer, inputBuffer, fftWorkBuffer, PFFFT_BACKWARD);
+
+        // Normalize the IFFT result (PFFFT doesn't scale)
+        for (int i = 0; i < frame_size; i++) {
+            inputBuffer[i] /= frame_size;
+        }
+
+        // Apply formant scaling (simplified - adjust frequencies)
+        // This is a simplified approach - a true formant shifter would be more complex
+        for (int i = 0; i < nb_samples; i++) {
+            // Apply a gentle high-shelf boost to simulate formant shifting
+            float sample = inputBuffer[i];
+            // Simple approximation: boost higher frequencies slightly
+            if (sample > 0) {
+                inputBuffer[i] = sample * (1.0f + (formantScale - 1.0f) * (sample * sample));
+            } else {
+                inputBuffer[i] = sample * (1.0f - (formantScale - 1.0f) * (sample * sample));
+            }
+        }
+
+        // Apply output scaling to prevent clipping (-1.5 dB ≈ 0.841 linear)
+        for (int i = 0; i < nb_samples; i++) {
+            inputBuffer[i] *= 0.841f;
+        }
+
+        // Convert back to PCM
+        for (int i = 0; i < nb_samples; i++) {
+            // Clamp to [-1.0, 1.0] and convert back to 16-bit
+            float clamped = fminf(1.0f, fmaxf(-1.0f, inputBuffer[i]));
+            ((int16_t*)framePcmBytes)[i] = (int16_t)(clamped * 32767.0f);
+        }
+    }
+
     if (nb_samples < frame_size) {
         op.e_o_s = 1;
     } else {
@@ -432,19 +705,20 @@ int writeFrame(uint8_t *framePcmBytes, uint32_t frameByteCount) {
     if (nb_samples != 0) {
         uint8_t *paddedFrameBytes = framePcmBytes;
         int freePaddedFrameBytes = 0;
-        
+
         if (nb_samples < cur_frame_size) {
-            paddedFrameBytes = malloc(cur_frame_size * 2);
-            freePaddedFrameBytes = 1;
-            memcpy(paddedFrameBytes, framePcmBytes, frameByteCount);
-            memset(paddedFrameBytes + nb_samples * 2, 0, cur_frame_size * 2 - nb_samples * 2);
+            // Use pre-allocated buffer for padding
+            memcpy(pcm_padded_buffer, framePcmBytes, frameByteCount);
+            memset(pcm_padded_buffer + nb_samples * 2, 0, (cur_frame_size - nb_samples) * 2);
+            paddedFrameBytes = pcm_padded_buffer;
+            // Don't free pcm_padded_buffer - it's pre-allocated and reused
         }
-        
+
         nbBytes = opus_encode(_encoder, (opus_int16 *)paddedFrameBytes, cur_frame_size, _packet, max_frame_bytes / 10);
         if (freePaddedFrameBytes) {
             free(paddedFrameBytes);
         }
-        
+
         if (nbBytes < 0) {
             LOGE("Encoding failed: %s. Aborting.", opus_strerror(nbBytes));
             return 0;

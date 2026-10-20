@@ -119,6 +119,19 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
 
     public static native byte[] getWaveform(String path);
 
+    private native void setVoiceChangeEnabled(boolean enabled);
+
+    // Track UI-requested voice change state
+    private boolean voiceChangeRequestedByUI = false;
+
+    /**
+     * Updates the voice change requested state from UI toggle
+     * @param requested true if voice change should be enabled based on UI toggle
+     */
+    public void setVoiceChangeRequestedByUI(boolean requested) {
+        voiceChangeRequestedByUI = requested;
+    }
+
     public native byte[] getWaveform2(short[] array, int length);
 
     public boolean isBuffering() {
@@ -1053,6 +1066,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                 if (isPlayingMessage(getPlayingMessageObject()) && !isMessagePaused()) {
                     pauseMessage(playingMessageObject);
                 }
+                // Stop recording if active when losing audio focus
+                if (recordStartRunnable != null || recordingAudio != null) {
+                    stopRecording(2, false, 0);
+                }
                 hasAudioFocus = 0;
                 audioFocus = AUDIO_NO_FOCUS_NO_DUCK;
             } else if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
@@ -1065,11 +1082,19 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                 }
             } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
                 audioFocus = AUDIO_NO_FOCUS_CAN_DUCK;
+                // Stop recording if active when losing audio focus (can duck case)
+                if (recordStartRunnable != null || recordingAudio != null) {
+                    stopRecording(2, false, 0);
+                }
             } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
                 audioFocus = AUDIO_NO_FOCUS_NO_DUCK;
                 if (isPlayingMessage(getPlayingMessageObject()) && !isMessagePaused()) {
                     pauseMessage(playingMessageObject);
                     resumeAudioOnFocusGain = true;
+                }
+                // Stop recording if active when losing audio focus
+                if (recordStartRunnable != null || recordingAudio != null) {
+                    stopRecording(2, false, 0);
                 }
             }
             setPlayerVolume();
@@ -1677,6 +1702,7 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                         raiseToEarRecord = true;
                         useFrontSpeaker = false;
                         startRecording(raiseChat.getCurrentAccount(), raiseChat.getDialogId(), null, raiseChat.getThreadMessage(), raiseChat.getClassGuid(), false);
+                        setVoiceChangeEnabled(true);
                     }
                     if (useFrontSpeaker) {
                         setUseFrontSpeaker(true);
@@ -1722,6 +1748,7 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                 if (BuildVars.LOGS_ENABLED) {
                     FileLog.d("stop record");
                 }
+                setVoiceChangeEnabled(false);
                 stopRecording(2, false, 0);
                 raiseToEarRecord = false;
                 ignoreOnPause = false;
@@ -3695,6 +3722,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                 fileBuffer.rewind();
 
                 audioRecorder.startRecording();
+                // Enable voice changing for this recording session based on UI toggle state
+                setVoiceChangeEnabled(voiceChangeRequestedByUI);
             } catch (Exception e) {
                 FileLog.e(e);
                 recordingAudio = null;
@@ -3774,6 +3803,8 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
             }
             fileEncodingQueue.postRunnable(() -> {
                 stopRecord();
+                // Disable voice changing when recording stops
+                setVoiceChangeEnabled(false);
                 if (BuildVars.LOGS_ENABLED) {
                     FileLog.d("stop recording internal in queue " + recordingAudioFileToSend.exists() + " " + recordingAudioFileToSend.length());
                 }
@@ -3848,6 +3879,7 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                 sendAfterDoneNotify = notify;
                 sendAfterDoneScheduleDate = scheduleDate;
                 audioRecorder.stop();
+                setVoiceChangeEnabled(false);
                 setBluetoothScoOn(false);
             } catch (Exception e) {
                 FileLog.e(e);
